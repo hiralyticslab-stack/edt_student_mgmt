@@ -1,23 +1,39 @@
-# Student Management with Mongoose
+# Student Management System with Redis Caching
 
-A command-line teaching example with two related models, Course and Student. One course can have many students. Run it once against a fresh practice database.
+A command-line teaching example demonstrating a cache-aside pattern with MongoDB (Mongoose, with two related models: `Course` and `Student`) and Redis (`ioredis`).
 
-## Setup
+## Features
+- **MongoDB Integration**: Stores related records in a `practice_students_<ROLL_NO>` database with relationship population (`.populate('course', 'name')`).
+- **Redis Caching**: Caches the list of all students under `students:all` for 60 seconds using helper wrappers (`SET`, `GET`, `EXPIRE`, and `DEL`).
+- **Cache Invalidation**: Automatically clears the cache (`DEL students:all`) on write operations (inserts, updates, and deletes).
 
-1. Install Node.js 20.19 or newer and create a MongoDB Atlas cluster.
-2. In Atlas, create a database user and allow your current IP under Network Access. Copy the Drivers connection string.
-3. Run `npm install` from this folder.
-4. Copy `.env.example` to `.env`. Replace USER, PASSWORD, CLUSTER and YOUR_ROLL_NO. URL-encode any reserved characters in the password. Never commit `.env`.
+## Setup & Run
+1. Install **Node.js 20.19 or newer**. Prepare a MongoDB Atlas cluster, create a database user with read/write access, and whitelist your IP under Network Access.
+2. Start local Redis (e.g., `docker run -p 6379:6379 redis` or `redis-server`).
+3. Open a terminal in this folder and run `npm install`.
+4. Copy `.env.example` to `.env` and set `MONGODB_URI`, `DB_NAME`, and `REDIS_URL` (default `redis://127.0.0.1:6379`). Do not commit `.env`.
 5. Run `npm start`.
 
-The database is named `practice_students_<ROLL_NO>`. Existing course names or student IDs will cause duplicate-key errors on a second run. For another complete run, use a new, empty roll number database. This example creates five students, then deletes S05; four remain.
+The database is named `practice_students_<ROLL_NO>`. Both MongoDB and Redis connections are initialized before operations and safely closed in `finally`, including after failures.
 
-## Files
+## Redis Helpers (`src/config/redis.js`)
 
-- `src/app.js`: starts the demonstration and closes the connection.
-- `src/config/database.js`: connects to the selected Atlas database.
-- `src/models/course.model.js`: course fields and allowed names.
-- `src/models/student.model.js`: student validation and the Course reference.
-- `src/services/student.service.js`: validation example and create, read, update, delete operations.
+The service interacts with Redis exclusively through these wrapper functions:
 
-The supplied source task prescribes one model. This teaching adaptation uses two models to demonstrate a relationship. Refer to the accompanying guide for an explanation of each operation.
+| Command | Helper | Purpose |
+| --- | --- | --- |
+| `SET` | `setCache(key, value)` | Store a value (JSON-encoded) |
+| `GET` | `getCache(key)` | Read a value; `null` on a miss |
+| `EXPIRE` | `expireCache(key, seconds)` | Set a time-to-live |
+| `DEL` | `deleteCache(key)` | Remove a key (cache invalidation) |
+
+## Caching Pattern (Cache-Aside)
+
+The student list is cached under `students:all` for 60 seconds.
+
+| Service Operation | MongoDB | Redis |
+| --- | --- | --- |
+| `insertMany()` / Creates | `Student.insertMany()` | `DEL students:all` |
+| Fetch All Students | `Student.find()` on a miss only | `GET`; on a miss `SET` + `EXPIRE` |
+| `findOneAndUpdate()` / Updates | `Student.findOneAndUpdate()` | `DEL students:all` |
+| `findOneAndDelete()` / Deletes | `Student.findOneAndDelete()` | `DEL students:all` |
